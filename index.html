@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blackjack Pro — Hi-Lo Live Analyzer</title>
+<style>
+  body{background:#071014;color:#fff;font-family:sans-serif;padding:20px;}
+  .panel{background:#0d1a1f;padding:15px;border-radius:10px;margin-bottom:20px;}
+  input,button{padding:5px;margin:5px;}
+  .hand{margin:10px 0;padding:5px;border:1px solid #555;border-radius:5px;}
+  .muted{color:#999;font-size:0.85em;}
+</style>
+</head>
+<body>
+
+<h1>Blackjack Pro — Hi-Lo Live Analyzer</h1>
+
+<div class="panel">
+  <h2>Enter Seen Cards</h2>
+  <input type="text" id="cardInput" placeholder="E.g. 2,5,K,A">
+  <button onclick="addSeenCards()">Add Cards</button>
+  <div id="runningCount">Running Count: 0</div>
+  <div id="trueCount">True Count: 0</div>
+</div>
+
+<div class="panel">
+  <h2>Player Hands</h2>
+  <div id="playerHands"></div>
+  <button onclick="addHand()">Add Hand</button>
+</div>
+
+<div class="panel">
+  <h2>Dealer Upcard</h2>
+  <input type="text" id="dealerUp" maxlength="2">
+  <button onclick="setDealer()">Set Dealer</button>
+</div>
+
+<script>
+/* ====== Deck & Hi-Lo Counting ====== */
+let deck = [];
+let seenCards = [];
+let runningCount = 0;
+let hands = [];
+let dealer = {up:null};
+
+const cardValues = {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':10,'Q':10,'K':10,'A':11};
+const hiLoCount = {'2':1,'3':1,'4':1,'5':1,'6':1,'7':0,'8':0,'9':0,'10':-1,'J':-1,'Q':-1,'K':-1,'A':-1};
+
+function initDeck(){
+  deck = [];
+  ['2','3','4','5','6','7','8','9','10','J','Q','K','A'].forEach(c=>{
+    for(let i=0;i<4;i++) deck.push(c);
+  });
+}
+initDeck();
+
+function updateCounts(){
+  runningCount = seenCards.reduce((sum,c)=>sum+hiLoCount[c],0);
+  const remainingDecks = deck.length/52;
+  const trueCount = (remainingDecks>0)?(runningCount/remainingDecks).toFixed(2):0;
+  document.getElementById('runningCount').innerText = 'Running Count: '+runningCount;
+  document.getElementById('trueCount').innerText = 'True Count: '+trueCount;
+}
+
+function addSeenCards(){
+  const input = document.getElementById('cardInput').value.toUpperCase().split(',').map(c=>c.trim());
+  input.forEach(c=>{
+    if(deck.includes(c)){
+      deck.splice(deck.indexOf(c),1);
+      seenCards.push(c);
+    }
+  });
+  updateCounts();
+  document.getElementById('cardInput').value='';
+  updateProbabilities();
+}
+
+/* ====== Player/Dealer Handling ====== */
+function addHand(){
+  hands.push({cards:[],doubled:false});
+  renderHands();
+}
+
+function renderHands(){
+  const ph = document.getElementById('playerHands');
+  ph.innerHTML='';
+  hands.forEach((h,i)=>{
+    const div = document.createElement('div');
+    div.className='hand';
+    div.innerHTML = `Hand ${i+1}: ${h.cards.join(', ')} <button onclick="addCard(${i})">Add Card</button>`;
+    ph.appendChild(div);
+  });
+}
+
+function addCard(handIndex){
+  const c = prompt('Enter card for hand '+(handIndex+1));
+  if(c){
+    const card = c.toUpperCase();
+    if(deck.includes(card)){
+      hands[handIndex].cards.push(card);
+      deck.splice(deck.indexOf(card),1);
+      seenCards.push(card);
+      updateCounts();
+      renderHands();
+      updateProbabilities();
+    } else alert('Card not in remaining deck!');
+  }
+}
+
+function setDealer(){
+  const d = document.getElementById('dealerUp').value.toUpperCase();
+  if(deck.includes(d)){
+    dealer.up = d;
+    deck.splice(deck.indexOf(d),1);
+    seenCards.push(d);
+    updateCounts();
+    document.getElementById('dealerUp').value='';
+    updateProbabilities();
+  } else alert('Card not in remaining deck!');
+}
+
+/* ====== Helper Functions ====== */
+function sampleRemainingCard(){
+  if(deck.length===0) return null;
+  const i = Math.floor(Math.random()*deck.length);
+  const c = deck[i];
+  deck.splice(i,1);
+  return c;
+}
+
+function handTotal(cards){
+  let total=0,aces=0;
+  cards.forEach(c=>{
+    total+=cardValues[c];
+    if(c==='A') aces++;
+  });
+  while(total>21 && aces>0){
+    total-=10; aces--;
+  }
+  return total;
+}
+
+function cardValue(c){return cardValues[c];}
+function isSoft(cards){return cards.includes('A') && handTotal(cards) !== cards.map(c=>cardValues[c]).reduce((a,b)=>a+b,0);}
+function canSplit(hand){return hand.cards.length===2 && hand.cards[0]===hand.cards[1];}
+
+/* ====== Basic Strategy Tables (same as previous snippet) ====== */
+/* ... include the same hardTotals, softTotals, pairs, basicStrategyMove() here ... */
+
+/* ====== Monte Carlo Optimal Play ====== */
+function playOptimalPlayerHand(cards,dealerUp){
+  if(!cards || cards.length===0 || !dealerUp) return null;
+  let handsQueue = [{cards:[...cards], doubled:false}];
+  let results = {win:0, push:0, loss:0};
+  const sims = 300; 
+  for(let s=0;s<sims;s++){
+    let playerHands = JSON.parse(JSON.stringify(handsQueue));
+    let dealerCards = [dealerUp];
+    let dealerHole = sampleRemainingCard();
+    dealerCards.push(dealerHole);
+    let finalTotals = [];
+    for(const h of playerHands){
+      let c = [...h.cards];
+      let doubled = h.doubled;
+      while(true){
+        const move = basicStrategyMove({cards:c},dealerUp);
+        if(move==='stand') break;
+        if(move==='hit'){
+          const nc = sampleRemainingCard();
+          if(!nc) break;
+          c.push(nc);
+          if(handTotal(c)>21) break;
+        }
+        if(move==='double'){
+          const nc = sampleRemainingCard();
+          if(nc) c.push(nc);
+          doubled=true;
+          break;
+        }
+        if(move==='split'){
+          const splitCard = c.pop();
+          const nc1 = sampleRemainingCard();
+          const nc2 = sampleRemainingCard();
+          if(nc1 && nc2){
+            playerHands.push({cards:[splitCard,nc1],doubled:false});
+            c.push(nc2);
+          }
+        }
+      }
+      finalTotals.push({total:handTotal(c),doubled:doubled});
+    }
+
+    let dealerTotal = handTotal(dealerCards);
+    let dealerSoft = dealerCards.includes('A') && dealerTotal-11<=10;
+    while(dealerTotal<17 || (dealerTotal===17 && dealerSoft)){
+      const c = sampleRemainingCard();
+      if(!c) break;
+      dealerCards.push(c);
+      dealerTotal += cardValue(c);
+      if(c==='A' && dealerTotal>21) dealerTotal-=10;
+      dealerSoft = dealerCards.includes('A') && dealerTotal-11<=10;
+    }
+
+    for(const h of finalTotals){
+      const t = h.total;
+      if(t>21) results.loss++;
+      else if(dealerTotal>21) results.win++;
+      else if(t>dealerTotal) results.win++;
+      else if(t===dealerTotal) results.push++;
+      else results.loss++;
+    }
+  }
+  const total = results.win+results.push+results.loss;
+  return {win:results.win/total,push:results.push/total,loss:results.loss/total};
+}
+
+/* ====== Update UI Probabilities ====== */
+function updateProbabilities(){
+  hands.forEach((h,i)=>{
+    const prob = playOptimalPlayerHand(h.cards,dealer.up);
+    const handEl = document.getElementById('playerHands').children[i];
+    if(!handEl) return;
+    let probEl = handEl.querySelector('.prob');
+    if(!probEl){
+      probEl = document.createElement('div');
+      probEl.className='muted prob';
+      handEl.appendChild(probEl);
+    }
+    if(prob) probEl.innerHTML = `Optimal Win ≈ ${(prob.win*100).toFixed(1)}% • Push ${(prob.push*100).toFixed(1)}% • Loss ${(prob.loss*100).toFixed(1)}%`;
+    else probEl.innerHTML='';
+  });
+}
+</script>
+</body>
+</html>
